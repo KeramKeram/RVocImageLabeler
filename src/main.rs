@@ -1,209 +1,120 @@
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use std::{error::Error, io};
+use crossterm::event::{self, Event, KeyCode, MouseEventKind, MouseButton};
 use tui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame, Terminal,
+    widgets::{Block, Borders, Paragraph},
+    layout::{Layout, Constraint, Direction},
+    style::{Style, Modifier, Color},
+    text::{Span},
+    Terminal,
 };
-use unicode_width::UnicodeWidthStr;
+use std::io;
 
-enum InputMode {
-    Normal,
-    Editing,
-}
-
-/// App holds the state of the application
 struct App {
-    /// Current value of the input box
-    input: String,
-    /// Current input mode
-    input_mode: InputMode,
-    /// History of recorded messages
-    messages: Vec<String>,
+    inputs: Vec<String>,    // Wektory na wartości inputów
+    active_input: usize,    // Indeks aktywnego inputa
 }
 
-impl Default for App {
-    fn default() -> App {
+impl App {
+    fn new() -> App {
         App {
-            input: String::new(),
-            input_mode: InputMode::Normal,
-            messages: Vec::new(),
+            inputs: vec![String::new(); 4], // 4 puste pola
+            active_input: 0,
         }
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    // setup terminal
-    enable_raw_mode()?;
+fn main() -> Result<(), io::Error> {
+    // Inicjalizacja terminala
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    crossterm::terminal::enable_raw_mode()?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // create app and run it
-    let app = App::default();
-    let res = run_app(&mut terminal, app);
+    let mut app = App::new();
 
-    // restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
-    if let Err(err) = res {
-        println!("{:?}", err)
-    }
-
-    Ok(())
-}
-
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, &app))?;
 
+        // Obsługa zdarzeń
         if let Event::Key(key) = event::read()? {
-            match app.input_mode {
-                InputMode::Normal => match key.code {
-                    KeyCode::Char('e') => {
-                        app.input_mode = InputMode::Editing;
+            match key.code {
+                KeyCode::Char(c) => {
+                    // Dodawanie znaków do aktywnego inputa
+                    if let Some(input) = app.inputs.get_mut(app.active_input) {
+                        input.push(c);
                     }
-                    KeyCode::Char('q') => {
-                        return Ok(());
+                }
+                KeyCode::Backspace => {
+                    // Usuwanie znaków z aktywnego inputa
+                    if let Some(input) = app.inputs.get_mut(app.active_input) {
+                        input.pop();
                     }
-                    _ => {}
-                },
-                InputMode::Editing => match key.code {
-                    KeyCode::Enter => {
-                        app.messages.push(app.input.drain(..).collect());
-                    }
-                    KeyCode::Char(c) => {
-                        app.input.push(c);
-                    }
-                    KeyCode::Backspace => {
-                        app.input.pop();
-                    }
-                    KeyCode::Esc => {
-                        app.input_mode = InputMode::Normal;
-                    }
-                    _ => {}
-                },
+                }
+                KeyCode::Tab => {
+                    // Przełączanie między inputami
+                    app.active_input = (app.active_input + 1) % app.inputs.len();
+                }
+                KeyCode::Esc => {
+                    // Wyjście z aplikacji
+                    break;
+                }
+                _ => {}
             }
+        } else if let Event::Mouse(mouse) = event::read()? {
+            if let Event::Mouse(mouse) = event::read()? {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let (x, y) = (mouse.column, mouse.row); // Pobieranie współrzędnych kliknięcia
+                    // Sprawdź, który input został kliknięty
+                    if y >= 2 && y <= 3 { // Input 1
+                        app.active_input = 0;
+                    } else if y >= 5 && y <= 6 { // Input 2
+                        app.active_input = 1;
+                    } else if y >= 8 && y <= 9 { // Input 3
+                        app.active_input = 2;
+                    } else if y >= 11 && y <= 12 { // Input 4
+                        app.active_input = 3;
+                    }
+                }
+            }
+
         }
     }
+
+    // Czyszczenie terminala
+    crossterm::terminal::disable_raw_mode()?;
+    Ok(())
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
+fn ui<B: Backend>(f: &mut tui::Frame<B>, app: &App) {
+    // Ustawienie layoutu
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
-        .constraints(
-            [
-                Constraint::Length(1),
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Max(3),
-            ]
-                .as_ref(),
-        )
+        .constraints([
+            Constraint::Length(3), // Input 1
+            Constraint::Length(2),
+            Constraint::Length(3), // Input 2
+            Constraint::Length(2),
+            Constraint::Length(3), // Input 3
+            Constraint::Length(2),
+            Constraint::Length(3), // Input 4
+            Constraint::Min(0),
+        ].as_ref())
         .split(f.size());
 
-    let (msg, style) = match app.input_mode {
-        InputMode::Normal => (
-            vec![
-                Span::raw("Press "),
-                Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to exit, "),
-                Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to start editing."),
-            ],
-            Style::default().add_modifier(Modifier::RAPID_BLINK),
-        ),
-        InputMode::Editing => (
-            vec![
-                Span::raw("Press "),
-                Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to stop editing, "),
-                Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to record the message"),
-            ],
-            Style::default(),
-        ),
-    };
-    let mut text = Text::from(Spans::from(msg));
-    text.patch_style(style);
-    let help_message = Paragraph::new(text);
-    f.render_widget(help_message, chunks[0]);
-
-    let input_images_path = Paragraph::new(app.input.as_ref())
-        .style(match app.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        })
-        .block(Block::default().borders(Borders::ALL).title("Input images path"));
-    f.render_widget(input_images_path, chunks[1]);
-
-    let input_labels_path = Paragraph::new(app.input.as_ref())
-        .style(match app.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        })
-        .block(Block::default().borders(Borders::ALL).title("Input labels path"));
-    f.render_widget(input_labels_path, chunks[2]);
-
-    let input_model_path = Paragraph::new(app.input.as_ref())
-        .style(match app.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        })
-        .block(Block::default().borders(Borders::ALL).title("Input model path"));
-    f.render_widget(input_model_path, chunks[3]);
-
-    let input_confidence = Paragraph::new(app.input.as_ref())
-        .style(match app.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        })
-        .block(Block::default().borders(Borders::ALL).title("Input confidance"));
-    f.render_widget(input_confidence, chunks[4]);
-
-
-    match app.input_mode {
-        InputMode::Normal =>
-        // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
-            {}
-
-        InputMode::Editing => {
-            // Make the cursor visible and ask tui-rs to put it at the specified coordinates after rendering
-            f.set_cursor(
-                // Put cursor past the end of the input text
-                chunks[1].x + app.input.width() as u16 + 1,
-                // Move one line down, from the border to the input line
-                chunks[1].y + 1,
+    for (i, input) in app.inputs.iter().enumerate() {
+        // Renderowanie każdego inputa
+        let block_title = if app.active_input == i {
+            Span::styled(
+                format!("Input {}", i + 1),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
             )
-        }
-    }
+        } else {
+            Span::raw(format!("Input {}", i + 1))
+        };
 
-    let messages: Vec<ListItem> = app
-        .messages
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let content = vec![Spans::from(Span::raw(format!("{}: {}", i, m)))];
-            ListItem::new(content)
-        })
-        .collect();
-    let messages =
-        List::new(messages).block(Block::default().borders(Borders::ALL).title("Messages"));
-    f.render_widget(messages, chunks[2]);
+        let input_paragraph = Paragraph::new(input.as_ref())
+            .block(Block::default().borders(Borders::ALL).title(block_title));
+        f.render_widget(input_paragraph, chunks[i * 2]);
+    }
 }
