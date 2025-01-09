@@ -26,7 +26,10 @@ fn main() {
     flex.fixed(&label4, 30);
     flex.fixed(&input4, 30);
 
-    let ok_button = Button::default().with_label("OK");
+    let mut ok_button = Button::default().with_label("OK");
+    ok_button.set_callback(|_| {
+        println!("Button clicked!");
+    });
     flex.fixed(&ok_button, 30);
 
     flex.end();
